@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { DoubleArrowRightIcon } from "@/components/icons";
 
 const THUMB_SIZE = 48;
-const TRACK_PADDING = 5;
-const COMPLETE_THRESHOLD = 0.85;
+const COMPLETE_THRESHOLD = 0.7; // 70% slide triggers completion smoothly on mobile
 
 export default function SlideToConfirm({
   label,
@@ -25,35 +24,62 @@ export default function SlideToConfirm({
   useEffect(() => {
     const track = trackRef.current;
     if (!track) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setTrackWidth(entry.contentRect.width);
+
+    const updateWidth = () => {
+      // clientWidth is inner width (content width excluding padding if border-box)
+      if (track.clientWidth > 0) {
+        setTrackWidth(track.clientWidth);
+      }
+    };
+
+    updateWidth();
+
+    const observer = new ResizeObserver(() => {
+      updateWidth();
     });
     observer.observe(track);
     return () => observer.disconnect();
   }, []);
 
-  const maxX = Math.max(0, trackWidth - THUMB_SIZE - TRACK_PADDING * 2);
+  const maxX = Math.max(0, trackWidth - THUMB_SIZE);
   const clamp = (value: number) => Math.min(Math.max(value, 0), maxX);
 
-  const handlePointerDown = (event: React.PointerEvent) => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (settling) return;
     setDragging(true);
     startXRef.current = event.clientX;
     originXRef.current = dragX;
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // ignore fallback
+    }
   };
 
-  const handlePointerMove = (event: React.PointerEvent) => {
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
-    const next = clamp(originXRef.current + (event.clientX - startXRef.current));
+    const delta = event.clientX - startXRef.current;
+    const next = clamp(originXRef.current + delta);
     setDragX(next);
   };
 
-  const finishDrag = () => {
+  const finishDrag = (event?: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
     setDragging(false);
+
+    if (event) {
+      try {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const progress = maxX > 0 ? dragX / maxX : 0;
     setSettling(true);
+
     if (progress >= COMPLETE_THRESHOLD) {
       setDragX(maxX);
       window.setTimeout(onConfirm, 150);
@@ -68,7 +94,7 @@ export default function SlideToConfirm({
   return (
     <div
       ref={trackRef}
-      className="relative w-full max-w-[310px] h-[49px] overflow-hidden rounded-2xl bg-[#242424] p-[5px] select-none"
+      className="relative w-full max-w-[310px] h-[49px] overflow-hidden rounded-2xl bg-[#242424] p-[5px] select-none touch-none"
     >
       <div
         aria-hidden
@@ -89,14 +115,15 @@ export default function SlideToConfirm({
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
-        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[10px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white active:cursor-grabbing"
+        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[10px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white active:cursor-grabbing touch-none"
         style={{
           transform: `translateX(${dragX}px)`,
           transition: dragging ? "none" : "transform 200ms ease-out",
         }}
       >
-        <DoubleArrowRightIcon className="size-6 text-neutral-700" />
+        <DoubleArrowRightIcon className="size-6 text-neutral-700 pointer-events-none" />
       </div>
     </div>
   );
 }
+
