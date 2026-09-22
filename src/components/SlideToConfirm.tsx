@@ -98,9 +98,9 @@ export default function SlideToConfirm({
     >
       <div
         aria-hidden
-        className="absolute inset-y-[5px] left-[5px] rounded-2xl bg-brand-500 shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)]"
+        className="absolute inset-y-[5px] left-[5px] right-[5px] rounded-[16px] bg-brand-500 shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)]"
         style={{
-          width: `${THUMB_SIZE + dragX}px`,
+          width: `${Math.min(THUMB_SIZE + dragX, trackWidth - 10)}px`,
           transition: dragging ? "none" : "width 200ms ease-out",
         }}
       />
@@ -115,7 +115,7 @@ export default function SlideToConfirm({
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
-        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[10px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white shadow-[0_0_0_3px_#64c416,0_0_12px_2px_rgba(100,196,22,0.55)] active:cursor-grabbing touch-none"
+        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[14px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white shadow-[0_0_0_3px_#64c416,0_0_12px_2px_rgba(100,196,22,0.55)] active:cursor-grabbing touch-none"
         style={{
           transform: `translateX(${dragX}px)`,
           transition: dragging ? "none" : "transform 200ms ease-out",
