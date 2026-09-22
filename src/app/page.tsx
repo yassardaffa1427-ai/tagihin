@@ -171,6 +171,7 @@ export default function DetailInvoicePage() {
             <PrimaryButton type="submit" disabled={!canSubmit}>
               Lanjut Pembayaran
             </PrimaryButton>
+            <p className="text-[10px] text-neutral-500">in-development by @yasraffad_sensei</p>
           </div>
         </Card>
       </form>

@@ -114,6 +114,10 @@ export default function SelesaiPage() {
               value={formatRupiah(total)}
               labelClassName="font-semibold text-neutral-950"
             />
+
+            <p className="py-5 text-[10px] text-neutral-500">
+              in-development by @yasraffad_sensei
+            </p>
           </div>
         </div>
       </div>
