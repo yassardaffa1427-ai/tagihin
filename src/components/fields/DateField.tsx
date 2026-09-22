@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { CalendarSearchIcon } from "@/components/icons";
 
 export default function DateField({
@@ -9,21 +10,30 @@ export default function DateField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const hasValue = Boolean(value);
+
+  const handleClick = () => {
+    try {
+      inputRef.current?.showPicker?.();
+    } catch {
+      inputRef.current?.focus();
+    }
+  };
 
   return (
     <div
-      className={`relative w-full h-[39px] rounded-[10px] border bg-white ${
+      onClick={handleClick}
+      className={`relative flex items-center w-full h-[39px] rounded-[10px] border bg-white cursor-pointer ${
         hasValue ? "border-neutral-400" : "border-neutral-200"
       }`}
     >
-      {/* Native input drives the real, OS-native date picker (iOS wheel /
-          Android calendar) — this is what makes the field device-native. */}
       <input
+        ref={inputRef}
         type="date"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`absolute inset-0 w-full h-full rounded-[10px] bg-transparent px-[10px] py-[10px] text-[13px] text-neutral-950 outline-none ${
+        className={`w-full h-full rounded-[10px] bg-transparent px-[10px] text-[13px] text-neutral-950 outline-none appearance-none cursor-pointer ${
           hasValue ? "has-value" : ""
         }`}
       />
@@ -36,3 +46,4 @@ export default function DateField({
     </div>
   );
 }
+
