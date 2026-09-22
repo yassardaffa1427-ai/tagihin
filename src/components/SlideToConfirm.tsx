@@ -98,9 +98,9 @@ export default function SlideToConfirm({
     >
       <div
         aria-hidden
-        className="absolute inset-y-[5px] left-[5px] right-[5px] rounded-[16px] bg-brand-500 shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)]"
+        className="absolute inset-y-[5px] left-[5px] rounded-[16px] bg-brand-500 shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)]"
         style={{
-          width: `${Math.min(THUMB_SIZE + dragX, trackWidth - 10)}px`,
+          width: `${THUMB_SIZE + dragX}px`,
           transition: dragging ? "none" : "width 200ms ease-out",
         }}
       />
