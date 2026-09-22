@@ -94,16 +94,8 @@ export default function SlideToConfirm({
   return (
     <div
       ref={trackRef}
-      className="relative w-full max-w-[310px] h-[49px] overflow-hidden rounded-2xl bg-[#242424] p-[5px] select-none touch-none"
+      className="relative w-full max-w-[310px] h-[49px] overflow-hidden rounded-2xl bg-brand-500 p-[5px] shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)] select-none touch-none"
     >
-      <div
-        aria-hidden
-        className="absolute inset-y-[5px] left-[5px] rounded-[16px] bg-brand-500 shadow-[inset_0px_0px_14px_0px_rgba(255,255,255,0.25),inset_0px_0px_11.8px_0px_rgba(255,255,255,0.6)]"
-        style={{
-          width: `${THUMB_SIZE + dragX}px`,
-          transition: dragging ? "none" : "width 200ms ease-out",
-        }}
-      />
       <p
         className="pointer-events-none absolute inset-0 flex items-center justify-center text-[16px] font-extrabold text-white"
         style={{ opacity: 0.45 * (1 - progress) }}
