@@ -116,7 +116,7 @@ export default function SlideToConfirm({
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
-        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[14px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white shadow-[0_0_0_3px_#64c416,0_0_12px_2px_rgba(100,196,22,0.55)] active:cursor-grabbing touch-none"
+        className="relative z-10 flex h-[39px] w-[48px] cursor-grab items-center justify-center rounded-[10px] border border-white bg-gradient-to-b from-[#bfbfbf] to-white shadow-[0_0_0_3px_#64c416,0_0_12px_2px_rgba(100,196,22,0.55)] active:cursor-grabbing touch-none"
         style={{
           transform: `translateX(${dragX}px)`,
           transition: dragging ? "none" : "transform 200ms ease-out",
