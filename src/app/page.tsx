@@ -55,7 +55,7 @@ export default function DetailInvoicePage() {
         <Card>
           <div className="flex w-full flex-col gap-[17px]">
             <div className="flex items-center gap-3">
-              <div className="flex size-[42px] items-center justify-center rounded-[10px] border border-white bg-gradient-to-br from-brand-500 to-white shadow-[0px_4px_10px_0px_rgba(0,0,0,0.1)]">
+              <div className="flex size-[42px] items-center justify-center rounded-[10px] border border-white bg-brand-500 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.1),inset_0px_0px_4px_0px_rgba(255,255,255,0.25),inset_0px_0px_6px_0px_rgba(255,255,255,0.6)]">
                 <CalculatorIcon className="size-6 text-white" />
               </div>
               <h1 className="text-[18px] font-medium text-black">Detail invoice</h1>
