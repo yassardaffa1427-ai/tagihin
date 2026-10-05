@@ -6,7 +6,7 @@ import { toPng, toBlob } from "html-to-image";
 import BackLink from "@/components/BackLink";
 import ProgressSteps from "@/components/ProgressSteps";
 import ScreenBackground from "@/components/ScreenBackground";
-import { UserIcon, WhatsAppIcon } from "@/components/icons";
+import { UserIcon } from "@/components/icons";
 import { formatRupiah, itemJumlah, subtotal, useInvoiceStore } from "@/lib/invoice-store";
 
 function ScallopHeader() {
@@ -238,10 +238,9 @@ export default function SelesaiPage() {
                 type="button"
                 onClick={handleShareToWhatsApp}
                 disabled={isSharing}
-                className="inline-flex items-center justify-center gap-[6px] text-[14px] font-medium text-[#007AFF] hover:opacity-80 active:opacity-60 transition-opacity cursor-pointer disabled:opacity-50"
+                className="text-[13px] font-medium text-[#007AFF] hover:underline active:opacity-60 transition-opacity cursor-pointer disabled:opacity-50"
               >
-                <WhatsAppIcon className="size-[18px] fill-current" />
-                <span>{isSharing ? "Menyiapkan struk..." : "Share to Whatsapp"}</span>
+                {isSharing ? "Menyiapkan struk..." : "Share to Whatsapp"}
               </button>
 
               {shareNotice && (
