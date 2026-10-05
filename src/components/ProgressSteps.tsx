@@ -2,7 +2,7 @@ import { CheckCircleIcon } from "@/components/icons";
 
 const STEPS = ["Proses", "Pembayaran", "invoice"] as const;
 
-export default function ProgressSteps({ doneCount }: { doneCount: 0 | 1 | 3 }) {
+export default function ProgressSteps({ doneCount }: { doneCount: 0 | 1 | 2 | 3 }) {
   return (
     <div className="bg-white rounded-3xl p-[14px] w-full">
       <div className="flex items-center justify-center w-full">
