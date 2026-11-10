@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent } from "react";
+import { FormEvent, useRef, useState } from "react";
 import Card from "@/components/Card";
-import { AddCircleIcon, CalculatorIcon, CloseCircleIcon } from "@/components/icons";
+import { AddCircleIcon, CalculatorIcon, CloseCircleIcon, ScanReceiptIcon } from "@/components/icons";
 import PrimaryButton from "@/components/PrimaryButton";
 import ProgressSteps from "@/components/ProgressSteps";
 import ScreenBackground from "@/components/ScreenBackground";
+import ScanNotaModal from "@/components/ScanNotaModal";
 import DateField from "@/components/fields/DateField";
 import TextField from "@/components/fields/TextField";
 import {
@@ -25,12 +26,30 @@ export default function DetailInvoicePage() {
     items,
     setField,
     addItem,
+    addScannedItems,
     removeItem,
     setItemNama,
     setItemQty,
     setItemHarga,
     submitInvoice,
   } = useInvoiceStore();
+
+  const [isScanModalOpen, setIsScanModalOpen] = useState(false);
+  const [selectedScanFile, setSelectedScanFile] = useState<File | null>(null);
+  const scanInputRef = useRef<HTMLInputElement>(null);
+
+  const handleScanButtonClick = () => {
+    scanInputRef.current?.click();
+  };
+
+  const handleScanFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedScanFile(file);
+      setIsScanModalOpen(true);
+    }
+    e.target.value = "";
+  };
 
   const safeItems = Array.isArray(items) ? items : [];
   const total = subtotal(safeItems);
@@ -155,17 +174,50 @@ export default function DetailInvoicePage() {
                   </div>
                 ))}
 
-                <button
-                  type="button"
-                  onClick={addItem}
-                  className="flex items-center gap-[6px] self-start py-[6px] text-[12px] font-medium text-brand-600 cursor-pointer"
-                >
-                  <AddCircleIcon className="size-4" />
-                  Tambah item
-                </button>
+                <div className="flex w-full items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    className="flex items-center gap-[6px] py-[6px] text-[12px] font-medium text-brand-600 cursor-pointer hover:opacity-80 transition-opacity"
+                  >
+                    <AddCircleIcon className="size-4" />
+                    Tambah item
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleScanButtonClick}
+                    className="flex items-center gap-[6px] py-[6px] text-[12px] font-medium text-info-500 cursor-pointer hover:opacity-80 transition-opacity"
+                  >
+                    <ScanReceiptIcon className="size-4" />
+                    Scan nota
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+
+          <input
+            ref={scanInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleScanFileSelected}
+          />
+
+          {isScanModalOpen && (
+            <ScanNotaModal
+              onClose={() => {
+                setIsScanModalOpen(false);
+                setSelectedScanFile(null);
+              }}
+              selectedFile={selectedScanFile}
+              onApplyItems={(scanned) => {
+                addScannedItems(scanned);
+              }}
+            />
+          )}
 
           <div className="flex w-full flex-col items-center gap-[10px]">
             <PrimaryButton type="submit" disabled={!canSubmit}>

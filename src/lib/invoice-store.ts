@@ -22,6 +22,9 @@ type InvoiceState = {
     value: string
   ) => void;
   addItem: () => void;
+  addScannedItems: (
+    items: Array<{ nama: string; qty: number; harga: number }>
+  ) => void;
   removeItem: (id: string) => void;
   setItemNama: (id: string, nama: string) => void;
   setItemQty: (id: string, qty: number) => void;
@@ -54,6 +57,24 @@ export const useInvoiceStore = create<InvoiceState>()(
       ...initialState,
       setField: (key, value) => set({ [key]: value }),
       addItem: () => set((state) => ({ items: [...state.items, newItem()] })),
+      addScannedItems: (scanned) =>
+        set((state) => {
+          if (!scanned || scanned.length === 0) return state;
+          const mapped: InvoiceItem[] = scanned.map((item) => ({
+            id: crypto.randomUUID(),
+            nama: item.nama,
+            qty: Math.max(1, item.qty || 1),
+            harga: Math.max(0, item.harga || 0),
+          }));
+          const isOnlyBlank =
+            state.items.length === 1 &&
+            !state.items[0].nama.trim() &&
+            state.items[0].harga === 0;
+
+          return {
+            items: isOnlyBlank ? mapped : [...state.items, ...mapped],
+          };
+        }),
       removeItem: (id) =>
         set((state) => ({
           items:

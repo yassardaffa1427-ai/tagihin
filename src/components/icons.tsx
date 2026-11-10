@@ -105,6 +105,20 @@ export function DoubleArrowRightIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function ScanReceiptIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" {...props}>
+      <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}>
+        <path d="M4 8V6C4 4.89543 4.89543 4 6 4H8" />
+        <path d="M16 4H18C19.1046 4 20 4.89543 20 6V8" />
+        <path d="M20 16V18C20 19.1046 19.1046 20 18 20H16" />
+        <path d="M8 20H6C4.89543 20 4 19.1046 4 18V16" />
+        <path d="M8 8.5H16M8 12H16M8 15.5H13" />
+      </g>
+    </svg>
+  );
+}
+
 export function WhatsAppIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" {...props}>
