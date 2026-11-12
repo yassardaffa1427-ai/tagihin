@@ -2,9 +2,18 @@
 
 import Image from "next/image";
 import { useState, useRef, useEffect, ChangeEvent } from "react";
-import { CloseCircleIcon, ScanReceiptIcon, AddCircleIcon } from "@/components/icons";
+import {
+  CloseCircleIcon,
+  ScanReceiptIcon,
+  AddCircleIcon,
+  CheckCircleIcon,
+} from "@/components/icons";
 import { formatRupiah } from "@/lib/invoice-store";
-import { parseReceiptText, ParsedItem } from "@/lib/receipt-parser";
+import {
+  parseReceiptText,
+  ParsedItem,
+  ParsedTax,
+} from "@/lib/receipt-parser";
 
 interface ScanNotaModalProps {
   onClose: () => void;
@@ -12,6 +21,11 @@ interface ScanNotaModalProps {
   selectedFile?: File | null;
 }
 
+/**
+ * Preprocess receipt image using local adaptive illumination normalization
+ * so uneven shadows (e.g. hand shadow) become uniform white paper while keeping
+ * soft anti-aliased dark ink edges for Tesseract LSTM.
+ */
 function preprocessImage(file: File): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
@@ -24,10 +38,12 @@ function preprocessImage(file: File): Promise<string> {
 
     img.onload = () => {
       try {
-        const maxDim = 1500;
         let width = img.width;
         let height = img.height;
 
+        // Ensure enough pixel height for small receipt text while capping huge photos
+        const maxDim = 1800;
+        const minWidth = 1000;
         if (width > maxDim || height > maxDim) {
           if (width > height) {
             height = Math.round((height * maxDim) / width);
@@ -36,6 +52,10 @@ function preprocessImage(file: File): Promise<string> {
             width = Math.round((width * maxDim) / height);
             height = maxDim;
           }
+        } else if (width < minWidth && Math.max(width, height) * 1.5 <= maxDim) {
+          const scale = minWidth / width;
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
         }
 
         const canvas = document.createElement("canvas");
@@ -51,19 +71,64 @@ function preprocessImage(file: File): Promise<string> {
         const imgData = ctx.getImageData(0, 0, width, height);
         const data = imgData.data;
 
-        // Simple grayscale & contrast enhancement for receipts
-        for (let i = 0; i < data.length; i += 4) {
-          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          const contrast = 1.25;
-          const enhanced = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
+        // 1. Convert to grayscale
+        const gray = new Float32Array(width * height);
+        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+          gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        }
 
-          data[i] = enhanced;
-          data[i + 1] = enhanced;
-          data[i + 2] = enhanced;
+        // 2. Estimate local background illumination via downscaled canvas blur
+        const bgScale = 32;
+        const bgW = Math.max(8, Math.round(width / bgScale));
+        const bgH = Math.max(8, Math.round(height / bgScale));
+
+        const smallCanvas = document.createElement("canvas");
+        smallCanvas.width = bgW;
+        smallCanvas.height = bgH;
+        const smallCtx = smallCanvas.getContext("2d");
+
+        let bgData: Uint8ClampedArray | null = null;
+        if (smallCtx) {
+          smallCtx.drawImage(canvas, 0, 0, bgW, bgH);
+          const upCanvas = document.createElement("canvas");
+          upCanvas.width = width;
+          upCanvas.height = height;
+          const upCtx = upCanvas.getContext("2d");
+          if (upCtx) {
+            upCtx.imageSmoothingEnabled = true;
+            upCtx.imageSmoothingQuality = "high";
+            upCtx.drawImage(smallCanvas, 0, 0, width, height);
+            bgData = upCtx.getImageData(0, 0, width, height).data;
+          }
+        }
+
+        // 3. Divide by local background and apply soft black/white point stretch
+        const blackPoint = 115;
+        const whitePoint = 225;
+        const range = whitePoint - blackPoint;
+
+        for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+          let val = gray[p];
+          if (bgData) {
+            const bgGray = Math.max(
+              30,
+              0.299 * bgData[i] + 0.587 * bgData[i + 1] + 0.114 * bgData[i + 2]
+            );
+            val = Math.min(255, (val / bgGray) * 245);
+          }
+
+          // Contrast stretch: paper -> 255, ink -> 0..80
+          let stretched = ((val - blackPoint) / range) * 255;
+          if (stretched < 0) stretched = 0;
+          if (stretched > 255) stretched = 255;
+
+          data[i] = stretched;
+          data[i + 1] = stretched;
+          data[i + 2] = stretched;
         }
 
         ctx.putImageData(imgData, 0, 0);
-        resolve(canvas.toDataURL("image/jpeg", 0.88));
+        resolve(canvas.toDataURL("image/jpeg", 0.92));
       } catch {
         resolve(img.src);
       }
@@ -73,10 +138,17 @@ function preprocessImage(file: File): Promise<string> {
   });
 }
 
+interface OcrResult {
+  text: string;
+  items: ParsedItem[];
+  pajak: ParsedTax | null;
+  totalAkhirNota: number | null;
+}
+
 async function performReceiptOcr(
   file: File,
   onProgress: (pct: number, message: string) => void
-): Promise<{ text: string; items: ParsedItem[] }> {
+): Promise<OcrResult> {
   const optimizedImageUrl = await preprocessImage(file);
   onProgress(40, "Menganalisis teks nota...");
 
@@ -90,14 +162,23 @@ async function performReceiptOcr(
     },
   });
 
+  await worker.setParameters({
+    preserve_interword_spaces: "1",
+  });
+
   const result = await worker.recognize(optimizedImageUrl);
   await worker.terminate();
 
   const extractedText = result.data.text || "";
-  onProgress(95, "Mendeteksi nama dan harga item...");
+  onProgress(95, "Memverifikasi item, pajak, dan total...");
   const parsed = parseReceiptText(extractedText);
 
-  return { text: extractedText, items: parsed };
+  return {
+    text: extractedText,
+    items: parsed.items,
+    pajak: parsed.pajak,
+    totalAkhirNota: parsed.totalAkhirNota,
+  };
 }
 
 export default function ScanNotaModal({
@@ -111,9 +192,12 @@ export default function ScanNotaModal({
   const [isScanning, setIsScanning] = useState<boolean>(Boolean(selectedFile));
   const [progress, setProgress] = useState<number>(selectedFile ? 20 : 0);
   const [statusMessage, setStatusMessage] = useState<string>(
-    selectedFile ? "Mengoptimalkan kontras nota..." : ""
+    selectedFile ? "Membersihkan bayangan & kontras nota..." : ""
   );
   const [items, setItems] = useState<ParsedItem[]>([]);
+  const [pajak, setPajak] = useState<ParsedTax | null>(null);
+  const [includeExclusiveTax, setIncludeExclusiveTax] = useState<boolean>(true);
+  const [totalAkhirNota, setTotalAkhirNota] = useState<number | null>(null);
   const [hasScanned, setHasScanned] = useState(false);
   const [rawText, setRawText] = useState("");
   const [showRawText, setShowRawText] = useState(false);
@@ -132,10 +216,13 @@ export default function ScanNotaModal({
         setStatusMessage(msg);
       }
     })
-      .then(({ text, items: parsed }) => {
+      .then(({ text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal }) => {
         if (cancelled) return;
         setRawText(text);
-        setItems(parsed);
+        setItems(parsedItems);
+        setPajak(parsedTax);
+        setIncludeExclusiveTax(Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction));
+        setTotalAkhirNota(parsedTotal);
         setHasScanned(true);
         setProgress(100);
       })
@@ -165,19 +252,23 @@ export default function ScanNotaModal({
     setError(null);
     setIsScanning(true);
     setProgress(20);
-    setStatusMessage("Mengoptimalkan kontras nota...");
+    setStatusMessage("Membersihkan bayangan & kontras nota...");
     setHasScanned(false);
 
     const previewUrl = URL.createObjectURL(file);
     setImagePreview(previewUrl);
 
     try {
-      const { text, items: parsed } = await performReceiptOcr(file, (pct, msg) => {
-        setProgress(pct);
-        setStatusMessage(msg);
-      });
+      const { text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal } =
+        await performReceiptOcr(file, (pct, msg) => {
+          setProgress(pct);
+          setStatusMessage(msg);
+        });
       setRawText(text);
-      setItems(parsed);
+      setItems(parsedItems);
+      setPajak(parsedTax);
+      setIncludeExclusiveTax(Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction));
+      setTotalAkhirNota(parsedTotal);
       setHasScanned(true);
       setProgress(100);
     } catch (err) {
@@ -216,26 +307,48 @@ export default function ScanNotaModal({
     ]);
   };
 
+  const subtotalItems = items.reduce(
+    (sum, item) => sum + (item.qty || 1) * (item.harga || 0),
+    0
+  );
+
+  const taxAdjustment =
+    pajak && !pajak.isIncludedInItems
+      ? pajak.isDeduction
+        ? -pajak.amount
+        : includeExclusiveTax
+        ? pajak.amount
+        : 0
+      : 0;
+
+  const grandTotalHitung = subtotalItems + taxAdjustment;
+  const selisihNota =
+    totalAkhirNota !== null ? Math.abs(grandTotalHitung - totalAkhirNota) : null;
+  const isVerifiedMatch = selisihNota !== null && selisihNota <= 50 && items.length > 0;
+
   const handleApply = () => {
     const validItems = items.filter(
       (item) => item.nama.trim().length > 0 && item.harga > 0
     );
-    if (validItems.length > 0) {
-      onApplyItems(
-        validItems.map((item) => ({
-          nama: item.nama.trim(),
-          qty: item.qty || 1,
-          harga: item.harga || 0,
-        }))
-      );
-      onClose();
-    }
-  };
+    if (validItems.length === 0) return;
 
-  const totalCalculated = items.reduce(
-    (sum, item) => sum + (item.qty || 1) * (item.harga || 0),
-    0
-  );
+    const output = validItems.map((item) => ({
+      nama: item.nama.trim(),
+      qty: item.qty || 1,
+      harga: item.harga || 0,
+    }));
+
+    if (pajak && !pajak.isIncludedInItems && !pajak.isDeduction && includeExclusiveTax && pajak.amount > 0) {
+      output.push({
+        nama: pajak.label,
+        qty: 1,
+        harga: pajak.amount,
+      });
+    }
+
+    onApplyItems(output);
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
@@ -260,7 +373,7 @@ export default function ScanNotaModal({
                 Scan Nota
               </h2>
               <p className="text-[11px] text-neutral-500">
-                Deteksi otomatis item & harga dari foto
+                Verifikasi item, PPh/PPN & total akhir
               </p>
             </div>
           </div>
@@ -382,11 +495,11 @@ export default function ScanNotaModal({
               {items.length > 0 ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-neutral-400 px-1">
-                    <span>Hasil Deteksi Nota</span>
+                    <span>Item & Harga</span>
                     <span>Periksa & Edit jika perlu</span>
                   </div>
 
-                  <div className="max-h-[220px] flex-col gap-2 overflow-y-auto pr-0.5 flex">
+                  <div className="max-h-[210px] flex-col gap-2 overflow-y-auto pr-0.5 flex">
                     {items.map((item) => (
                       <div
                         key={item.id}
@@ -400,11 +513,11 @@ export default function ScanNotaModal({
                           onChange={(e) =>
                             handleItemChange(item.id, "nama", e.target.value)
                           }
-                          className="flex-1 rounded p-1 text-[12px] font-medium text-neutral-900 outline-none"
+                          className="flex-1 min-w-0 rounded p-1 text-[12px] font-medium text-neutral-900 outline-none"
                         />
 
                         {/* Qty */}
-                        <div className="flex w-[40px] items-center rounded bg-neutral-50 px-1">
+                        <div className="flex w-[40px] shrink-0 items-center rounded bg-neutral-50 px-1">
                           <span className="text-[10px] text-neutral-400">x</span>
                           <input
                             type="number"
@@ -422,7 +535,7 @@ export default function ScanNotaModal({
                         </div>
 
                         {/* Harga */}
-                        <div className="flex w-[82px] items-center rounded bg-neutral-50 px-1.5">
+                        <div className="flex w-[84px] shrink-0 items-center rounded bg-neutral-50 px-1.5">
                           <span className="text-[10px] text-neutral-400">Rp</span>
                           <input
                             type="number"
@@ -443,7 +556,7 @@ export default function ScanNotaModal({
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(item.id)}
-                          className="cursor-pointer text-neutral-400 hover:text-red-500"
+                          className="shrink-0 cursor-pointer text-neutral-400 hover:text-red-500"
                           aria-label="Hapus item"
                         >
                           <CloseCircleIcon className="size-4" />
@@ -462,12 +575,70 @@ export default function ScanNotaModal({
                     Tambah baris
                   </button>
 
-                  {/* Scanned Total calculation */}
-                  <div className="flex items-center justify-between rounded-xl bg-info-500/10 px-3 py-2 text-info-500">
-                    <span className="text-[12px] font-bold">Total Terdeteksi:</span>
-                    <span className="text-[14px] font-extrabold">
-                      {formatRupiah(totalCalculated)}
-                    </span>
+                  {/* Verification Summary Card: Harga Item + PPh/PPN + Total Akhir */}
+                  <div className="flex flex-col gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-[12px]">
+                    <div className="flex items-center justify-between text-neutral-600">
+                      <span>Subtotal Item ({items.length})</span>
+                      <span className="font-semibold text-neutral-900">
+                        {formatRupiah(subtotalItems)}
+                      </span>
+                    </div>
+
+                    {pajak && (
+                      <div className="flex items-center justify-between text-neutral-600">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          {!pajak.isIncludedInItems && !pajak.isDeduction && (
+                            <input
+                              type="checkbox"
+                              checked={includeExclusiveTax}
+                              onChange={(e) => setIncludeExclusiveTax(e.target.checked)}
+                              className="size-3.5 rounded accent-info-500"
+                            />
+                          )}
+                          <span>
+                            {pajak.label}
+                            {pajak.isIncludedInItems ? " (sudah termasuk)" : ""}
+                          </span>
+                        </label>
+                        <span className="font-medium text-neutral-700">
+                          {pajak.isDeduction ? "-" : ""}
+                          {formatRupiah(pajak.amount)}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="my-0.5 border-t border-neutral-200" />
+
+                    <div className="flex items-center justify-between text-info-500">
+                      <span className="font-bold">Total Akhir</span>
+                      <span className="text-[14px] font-extrabold">
+                        {formatRupiah(grandTotalHitung)}
+                      </span>
+                    </div>
+
+                    {totalAkhirNota !== null && (
+                      <div
+                        className={`mt-1 flex items-center justify-between rounded-lg px-2.5 py-1.5 text-[11px] font-medium ${
+                          isVerifiedMatch
+                            ? "bg-green-50 text-green-700"
+                            : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {isVerifiedMatch && (
+                            <CheckCircleIcon className="size-3.5 shrink-0 text-green-600" />
+                          )}
+                          {isVerifiedMatch
+                            ? "Cocok dengan Total Nota"
+                            : `Total di Nota: ${formatRupiah(totalAkhirNota)}`}
+                        </span>
+                        {!isVerifiedMatch && selisihNota !== null && (
+                          <span className="font-bold">
+                            Selisih {formatRupiah(selisihNota)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
