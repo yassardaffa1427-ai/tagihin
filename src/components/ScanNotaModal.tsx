@@ -22,11 +22,61 @@ interface ScanNotaModalProps {
 }
 
 /**
- * Preprocess receipt image using local adaptive illumination normalization
- * so uneven shadows (e.g. hand shadow) become uniform white paper while keeping
- * soft anti-aliased dark ink edges for Tesseract LSTM.
+ * Resize photo cleanly for fast AI upload (<400KB) while keeping natural color & sharpness.
  */
-function preprocessImage(file: File): Promise<string> {
+function prepareImageForAi(file: File): Promise<{ dataUrl: string; mimeType: string }> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve({ dataUrl: URL.createObjectURL(file), mimeType: file.type || "image/jpeg" });
+
+    img.onload = () => {
+      try {
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1600;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve({ dataUrl: img.src, mimeType: "image/jpeg" });
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve({
+          dataUrl: canvas.toDataURL("image/jpeg", 0.86),
+          mimeType: "image/jpeg",
+        });
+      } catch {
+        resolve({ dataUrl: img.src, mimeType: "image/jpeg" });
+      }
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Preprocess receipt image with local adaptive illumination normalization (fallback for Tesseract OCR).
+ */
+function preprocessImageForOcr(file: File): Promise<string> {
   return new Promise((resolve) => {
     const img = new window.Image();
     const reader = new FileReader();
@@ -40,10 +90,9 @@ function preprocessImage(file: File): Promise<string> {
       try {
         let width = img.width;
         let height = img.height;
-
-        // Ensure enough pixel height for small receipt text while capping huge photos
         const maxDim = 1800;
         const minWidth = 1000;
+
         if (width > maxDim || height > maxDim) {
           if (width > height) {
             height = Math.round((height * maxDim) / width);
@@ -71,13 +120,11 @@ function preprocessImage(file: File): Promise<string> {
         const imgData = ctx.getImageData(0, 0, width, height);
         const data = imgData.data;
 
-        // 1. Convert to grayscale
         const gray = new Float32Array(width * height);
         for (let i = 0, p = 0; i < data.length; i += 4, p++) {
           gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
         }
 
-        // 2. Estimate local background illumination via downscaled canvas blur
         const bgScale = 32;
         const bgW = Math.max(8, Math.round(width / bgScale));
         const bgH = Math.max(8, Math.round(height / bgScale));
@@ -102,7 +149,6 @@ function preprocessImage(file: File): Promise<string> {
           }
         }
 
-        // 3. Divide by local background and apply soft black/white point stretch
         const blackPoint = 115;
         const whitePoint = 225;
         const range = whitePoint - blackPoint;
@@ -117,7 +163,6 @@ function preprocessImage(file: File): Promise<string> {
             val = Math.min(255, (val / bgGray) * 245);
           }
 
-          // Contrast stretch: paper -> 255, ink -> 0..80
           let stretched = ((val - blackPoint) / range) * 255;
           if (stretched < 0) stretched = 0;
           if (stretched > 255) stretched = 255;
@@ -138,25 +183,55 @@ function preprocessImage(file: File): Promise<string> {
   });
 }
 
-interface OcrResult {
+interface ScanOutput {
+  engine: "ai" | "ocr";
   text: string;
   items: ParsedItem[];
   pajak: ParsedTax | null;
   totalAkhirNota: number | null;
 }
 
-async function performReceiptOcr(
+async function scanReceiptSmart(
   file: File,
   onProgress: (pct: number, message: string) => void
-): Promise<OcrResult> {
-  const optimizedImageUrl = await preprocessImage(file);
-  onProgress(40, "Menganalisis teks nota...");
+): Promise<ScanOutput> {
+  onProgress(20, "Mengoptimalkan foto nota...");
+  const { dataUrl, mimeType } = await prepareImageForAi(file);
+
+  // 1. Primary: Gemini Vision AI via /api/scan-nota
+  try {
+    onProgress(45, "AI sedang membaca & memverifikasi nota...");
+    const res = await fetch("/api/scan-nota", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: dataUrl, mimeType }),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      onProgress(95, "Menyusun hasil verifikasi...");
+      return {
+        engine: "ai",
+        text: "",
+        items: Array.isArray(json.items) ? json.items : [],
+        pajak: json.pajak || null,
+        totalAkhirNota:
+          typeof json.totalAkhirNota === "number" ? json.totalAkhirNota : null,
+      };
+    }
+  } catch (err) {
+    console.warn("AI scan failed, falling back to local OCR:", err);
+  }
+
+  // 2. Fallback: Local Tesseract OCR
+  onProgress(35, "Menggunakan OCR lokal...");
+  const optimizedImageUrl = await preprocessImageForOcr(file);
 
   const { createWorker } = await import("tesseract.js");
   const worker = await createWorker(["ind", "eng"], 1, {
     logger: (m) => {
       if (m.status === "recognizing text" && typeof m.progress === "number") {
-        const pct = Math.round(40 + m.progress * 50);
+        const pct = Math.round(45 + m.progress * 45);
         onProgress(pct, `Membaca teks nota (${Math.round(m.progress * 100)}%)...`);
       }
     },
@@ -174,6 +249,7 @@ async function performReceiptOcr(
   const parsed = parseReceiptText(extractedText);
 
   return {
+    engine: "ocr",
     text: extractedText,
     items: parsed.items,
     pajak: parsed.pajak,
@@ -192,8 +268,9 @@ export default function ScanNotaModal({
   const [isScanning, setIsScanning] = useState<boolean>(Boolean(selectedFile));
   const [progress, setProgress] = useState<number>(selectedFile ? 20 : 0);
   const [statusMessage, setStatusMessage] = useState<string>(
-    selectedFile ? "Membersihkan bayangan & kontras nota..." : ""
+    selectedFile ? "Mengoptimalkan foto nota..." : ""
   );
+  const [scanEngine, setScanEngine] = useState<"ai" | "ocr" | null>(null);
   const [items, setItems] = useState<ParsedItem[]>([]);
   const [pajak, setPajak] = useState<ParsedTax | null>(null);
   const [includeExclusiveTax, setIncludeExclusiveTax] = useState<boolean>(true);
@@ -210,18 +287,21 @@ export default function ScanNotaModal({
 
     let cancelled = false;
 
-    performReceiptOcr(selectedFile, (pct, msg) => {
+    scanReceiptSmart(selectedFile, (pct, msg) => {
       if (!cancelled) {
         setProgress(pct);
         setStatusMessage(msg);
       }
     })
-      .then(({ text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal }) => {
+      .then(({ engine, text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal }) => {
         if (cancelled) return;
+        setScanEngine(engine);
         setRawText(text);
         setItems(parsedItems);
         setPajak(parsedTax);
-        setIncludeExclusiveTax(Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction));
+        setIncludeExclusiveTax(
+          Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction)
+        );
         setTotalAkhirNota(parsedTotal);
         setHasScanned(true);
         setProgress(100);
@@ -252,22 +332,25 @@ export default function ScanNotaModal({
     setError(null);
     setIsScanning(true);
     setProgress(20);
-    setStatusMessage("Membersihkan bayangan & kontras nota...");
+    setStatusMessage("Mengoptimalkan foto nota...");
     setHasScanned(false);
 
     const previewUrl = URL.createObjectURL(file);
     setImagePreview(previewUrl);
 
     try {
-      const { text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal } =
-        await performReceiptOcr(file, (pct, msg) => {
+      const { engine, text, items: parsedItems, pajak: parsedTax, totalAkhirNota: parsedTotal } =
+        await scanReceiptSmart(file, (pct, msg) => {
           setProgress(pct);
           setStatusMessage(msg);
         });
+      setScanEngine(engine);
       setRawText(text);
       setItems(parsedItems);
       setPajak(parsedTax);
-      setIncludeExclusiveTax(Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction));
+      setIncludeExclusiveTax(
+        Boolean(parsedTax && !parsedTax.isIncludedInItems && !parsedTax.isDeduction)
+      );
       setTotalAkhirNota(parsedTotal);
       setHasScanned(true);
       setProgress(100);
@@ -338,7 +421,13 @@ export default function ScanNotaModal({
       harga: item.harga || 0,
     }));
 
-    if (pajak && !pajak.isIncludedInItems && !pajak.isDeduction && includeExclusiveTax && pajak.amount > 0) {
+    if (
+      pajak &&
+      !pajak.isIncludedInItems &&
+      !pajak.isDeduction &&
+      includeExclusiveTax &&
+      pajak.amount > 0
+    ) {
       output.push({
         nama: pajak.label,
         qty: 1,
@@ -473,9 +562,16 @@ export default function ScanNotaModal({
                       />
                     </div>
                     <div className="flex flex-col text-left">
-                      <span className="text-[11px] font-semibold text-neutral-700">
-                        Foto Nota
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-neutral-700">
+                          Foto Nota
+                        </span>
+                        {scanEngine === "ai" && (
+                          <span className="rounded-full bg-info-500/10 px-1.5 py-0.5 text-[9px] font-bold text-info-500">
+                            AI Vision
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[10px] text-neutral-500">
                         {items.length} item terdeteksi
                       </span>
@@ -663,7 +759,7 @@ export default function ScanNotaModal({
                 </div>
               )}
 
-              {/* Raw text toggle */}
+              {/* Raw text toggle (when fallback OCR was used) */}
               {rawText && (
                 <div className="mt-1">
                   <button
